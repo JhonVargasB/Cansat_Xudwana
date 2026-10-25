@@ -1,0 +1,14 @@
+menu "nRF24L01+ CanSat example"
+
+choice NRF24_EXAMPLE_ROLE
+    prompt "Application role"
+    default NRF24_EXAMPLE_TX
+
+    config NRF24_EXAMPLE_TX
+        bool "CanSat transmitter (main_Tx.c)"
+
+    config NRF24_EXAMPLE_RX
+        bool "Ground receiver (main_Rx.c)"
+endchoice
+
+endmenu

@@ -1,0 +1,47 @@
+# ESP-IDF / CMake: archivos generados
+/build/
+/build-*/
+/build_*/
+/managed_components/
+/sdkconfig
+/sdkconfig.old
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+*.o
+*.obj
+*.a
+*.elf
+*.bin
+*.map
+
+# Configuracion local de herramientas y credenciales
+/.vscode/
+/.idea/
+/.codex/
+/.aws/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Capturas y temporales de MATLAB / Python
+/matlab/capturas/
+*.asv
+*.m~
+__pycache__/
+*.py[cod]
+/.venv/
+/venv/
+/tmp/
+/output/
+*.log
+matlab_crash_dump*
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
