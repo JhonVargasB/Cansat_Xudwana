@@ -9,12 +9,6 @@
 #include "driver/uart.h"
 
 // Pines para la memoria SD en SPI2
-/*
-#define PIN_SD_MOSI GPIO_NUM_12
-#define PIN_SD_MISO GPIO_NUM_10
-#define PIN_SD_CS GPIO_NUM_13
-#define PIN_SD_SCK GPIO_NUM_11
-*/
 
 #define PIN_SD_MOSI GPIO_NUM_11
 #define PIN_SD_MISO GPIO_NUM_9
@@ -25,26 +19,26 @@
 
 /* nRF24L01 transmisor: SPI3 de la placa CanSat. */
 /*
-#define PIN_NRF24_TX_MOSI GPIO_NUM_4
-#define PIN_NRF24_TX_MISO GPIO_NUM_5
-#define PIN_NRF24_TX_SCLK GPIO_NUM_6
-#define PIN_NRF24_TX_CSN GPIO_NUM_15
-#define PIN_NRF24_TX_CE GPIO_NUM_7
-#define PIN_NRF24_TX_IRQ GPIO_NUM_NC
-
-*/
-
 #define PIN_NRF24_TX_MOSI GPIO_NUM_16
 #define PIN_NRF24_TX_MISO GPIO_NUM_15
 #define PIN_NRF24_TX_SCLK GPIO_NUM_6
 #define PIN_NRF24_TX_CSN GPIO_NUM_4
 #define PIN_NRF24_TX_CE GPIO_NUM_7
 #define PIN_NRF24_TX_IRQ GPIO_NUM_NC
+*/
 
+
+#define PIN_NRF24_TX_MOSI GPIO_NUM_16
+#define PIN_NRF24_TX_MISO GPIO_NUM_4  //
+#define PIN_NRF24_TX_SCLK GPIO_NUM_5 //
+#define PIN_NRF24_TX_CSN GPIO_NUM_15 //
+#define PIN_NRF24_TX_CE GPIO_NUM_6 //
+#define PIN_NRF24_TX_IRQ GPIO_NUM_NC
 
 #define HOST_NRF24_TX_SPI3 SPI3_HOST
 
 /* nRF24L01 receptor: mismo cableado en una segunda placa ESP32-S3. */
+/*
 #define PIN_NRF24_RX_MOSI GPIO_NUM_9
 #define PIN_NRF24_RX_MISO GPIO_NUM_43
 #define PIN_NRF24_RX_SCLK GPIO_NUM_5
@@ -52,25 +46,29 @@
 #define PIN_NRF24_RX_CE GPIO_NUM_4
 #define PIN_NRF24_RX_IRQ GPIO_NUM_NC
 #define HOST_NRF24_RX_SPI3 SPI3_HOST
+*/
+
 
 // pines para el BUS I2C 1
+
 #define PIN_SDA1_I2C GPIO_NUM_14
 #define PIN_SCLK1_I2C GPIO_NUM_21
 #define I2C_1 I2C_NUM_1
 
 // pines UART0 para el GPS NEO6M
-/*
-#define PIN_GPS_UART_TX GPIO_NUM_17
-#define PIN_GPS_UART_RX GPIO_NUM_18
 
- */
 
- #define PIN_GPS_UART_TX GPIO_NUM_48
-#define PIN_GPS_UART_RX GPIO_NUM_47
+#define PIN_GPS_UART_TX GPIO_NUM_47
+#define PIN_GPS_UART_RX GPIO_NUM_48
+
 #define UART_GPS UART_NUM_1
 
 /* Buzzer pasivo: salida PWM. GPIO8 libre en el cableado actual. */
 #define PIN_BUZZER GPIO_NUM_38
+
+//Defuncion de pines GPIO
+#define GPIO_LED_ GPIO_NUM_42
+
 
 /* Capacidad de las colas de la aplicacion. */
 #define GPS_QUEUE_LENGTH UINT32_C(1)

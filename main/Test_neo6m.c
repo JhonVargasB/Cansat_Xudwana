@@ -20,7 +20,11 @@ void app_main(void)
         return;
     }
 
-    ESP_LOGI(TAG, "NEO-6M listo: UART1 TX=GPIO17 RX=GPIO16, 9600 bps");
+    ESP_LOGI(TAG, "NEO-6M listo: UART%d TX=GPIO%d RX=GPIO%d, %lu bps",
+             (int)gps.config.uart_num,
+             (int)gps.config.tx_pin,
+             (int)gps.config.rx_pin,
+             (unsigned long)gps.config.baud_rate);
 
     while (true) {
         err = neo6m_update(&gps, 1000);

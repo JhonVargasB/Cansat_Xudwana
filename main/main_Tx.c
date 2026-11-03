@@ -1,115 +1,50 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
+#include "driver/gpio.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "nrf24_example_protocol.h"
+#include "nrf24_command_protocol.h"
 #include "nrf24l01.h"
 #include "shared.h"
 
-/*
- * CanSat / PTX example:
- *   - sends telemetry periodically;
- *   - receives ground commands inside the automatic ACK payload;
- *   - reports the result of the last command in the next telemetry packet.
+/* PTX: telemetria de 32 bytes, comandos por ACK de 7 y respuestas de 9.
+ * Prueba de protocolo: las acciones son logs, sin SD ni calibracion real.
  */
+#define COMMANDS_PER_CYCLE 6U
+#define COMMAND_LED_GPIO GPIO_NUM_42
+
+typedef struct {
+    bool valid;
+    uint16_t sequence;
+    uint8_t command;
+    uint8_t result;
+    uint8_t state;
+} command_history_t;
 
 static const char *TAG = "NRF24_TX";
-
-/* nRF24L01+ sends the least-significant address byte first over the air. */
 static const uint8_t s_radio_address[NRF24_MAX_ADDRESS_WIDTH] =
     NRF24_TELEMETRY_ADDRESS;
 
-static bool command_is_valid(const nrf24_command_packet_t *command,
-                             size_t payload_length)
-{
-    return (command != NULL)
-           && (payload_length == sizeof(*command));
-}
-
-static nrf24_command_status_t execute_command(
-    const nrf24_command_packet_t *command,
-    uint32_t *telemetry_period_ms)
-{
-    switch ((nrf24_command_code_t)command->command) {
-        case NRF24_COMMAND_PING:
-            ESP_LOGI(TAG, "PING recibido en ACK (id=%u)", command->command_id);
-            return NRF24_COMMAND_STATUS_OK;
-
-        case NRF24_COMMAND_SET_TELEMETRY_PERIOD:
-            if ((command->argument < TELEMETRY_PERIOD_MIN_MS)
-                || (command->argument > TELEMETRY_PERIOD_MAX_MS)) {
-                ESP_LOGW(TAG, "Periodo fuera de rango: %" PRIu32 " ms",
-                         command->argument);
-                return NRF24_COMMAND_STATUS_INVALID;
-            }
-
-            *telemetry_period_ms = command->argument;
-            ESP_LOGI(TAG, "Nuevo periodo: %" PRIu32 " ms (id=%u)",
-                     *telemetry_period_ms, command->command_id);
-            return NRF24_COMMAND_STATUS_OK;
-
-        default:
-            ESP_LOGW(TAG, "Comando no soportado: %u (id=%u)",
-                     command->command, command->command_id);
-            return NRF24_COMMAND_STATUS_UNSUPPORTED;
-    }
-}
-
-static void process_ack_payload(nrf24l01_t *radio,
-                                uint16_t *last_command_id,
-                                uint8_t *last_command_status,
-                                uint32_t *telemetry_period_ms)
-{
-    bool available = false;
-    nrf24_pipe_t pipe = NRF24_PIPE_0;
-    esp_err_t err = nrf24l01_data_available(radio, &available, &pipe);
-
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "No se pudo consultar el ACK payload: %s",
-                 esp_err_to_name(err));
-        return;
-    }
-
-    if (!available) {
-        ESP_LOGD(TAG, "ACK recibido sin comando");
-        return;
-    }
-
-    nrf24_command_packet_t command = {0};
-    size_t payload_length = 0;
-    nrf24_pipe_t received_pipe = NRF24_PIPE_0;
-    err = nrf24l01_receive(radio, &command, sizeof(command),
-                           &payload_length, &received_pipe);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "No se pudo leer el ACK payload: %s",
-                 esp_err_to_name(err));
-        return;
-    }
-
-    if (!command_is_valid(&command, payload_length)) {
-        ESP_LOGW(TAG, "ACK payload invalido (%u bytes, pipe %u)",
-                 (unsigned)payload_length, received_pipe);
-        return;
-    }
-
-    /* A lost ACK can cause the radio to deliver the same command again. */
-    if (command.command_id == *last_command_id) {
-        ESP_LOGW(TAG, "Comando duplicado ignorado (id=%u)",
-                 command.command_id);
-        return;
-    }
-
-    *last_command_id = command.command_id;
-    *last_command_status = execute_command(&command, telemetry_period_ms);
-}
+/* Prototipos. */
+static esp_err_t gpio_init(void);
+static const char *command_name(uint8_t command);
+static bool command_is_valid(const nrf24_command_packet_t *command, size_t length);
+static nrf24_command_result_t execute_command(const nrf24_command_packet_t *command);
+static esp_err_t send_command_response(nrf24l01_t *radio,
+                                      const nrf24_command_packet_t *command,
+                                      uint8_t result, uint8_t state);
+static void process_ack_payload(nrf24l01_t *radio, command_history_t *history);
 
 void app_main(void)
 {
+    ESP_ERROR_CHECK(gpio_init());
+
     nrf24l01_t radio = {0};
     nrf24l01_config_t config = NRF24L01_TX_DEFAULT_CONFIG();
 
@@ -124,11 +59,12 @@ void app_main(void)
     }
 
     ESP_ERROR_CHECK(nrf24l01_print_diagnostics(&radio));
+    ESP_LOGI(TAG, "Prueba de comandos: ACCEPTED confirma el procesamiento del log; "
+                 "sin registro SD ni calibracion real, state=0");
 
     uint32_t sequence = 0;
     uint32_t telemetry_period_ms = NRF24_EXAMPLE_TELEMETRY_PERIOD_DEFAULT_MS;
-    uint16_t last_command_id = 0;
-    uint8_t last_command_status = NRF24_COMMAND_STATUS_NONE;
+    command_history_t history = {0};
 
     while (true) {
         telemetry_data_t telemetry = {
@@ -161,10 +97,7 @@ void app_main(void)
                      telemetry.altitude_cm / TELEMETRY_CENTI_SCALE,
                      telemetry.temperature_centi_c / 100.0,
                      telemetry.satellites);
-            process_ack_payload(&radio,
-                                &last_command_id,
-                                &last_command_status,
-                                &telemetry_period_ms);
+            process_ack_payload(&radio, &history);
         } else {
             ESP_LOGW(TAG, "Fallo TX #%" PRIu32 ": %s",
                      telemetry.sequence, esp_err_to_name(err));
@@ -172,4 +105,155 @@ void app_main(void)
 
         vTaskDelay(pdMS_TO_TICKS(telemetry_period_ms));
     }
+}
+
+/* Definiciones de funciones auxiliares. */
+static esp_err_t gpio_init(void)
+{
+    const gpio_config_t config = {
+        .pin_bit_mask = UINT64_C(1) << COMMAND_LED_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+
+    esp_err_t err = gpio_set_level(COMMAND_LED_GPIO, 0);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return gpio_config(&config);
+}
+
+static const char *command_name(uint8_t command)
+{
+    switch (command) {
+        case NRF24_COMMAND_REC_ON: return "REC_ON";
+        case NRF24_COMMAND_REC_OFF: return "REC_OFF";
+        case NRF24_COMMAND_CALIBRATE: return "CALIBRAR";
+        default: return "DESCONOCIDO";
+    }
+}
+
+static bool command_is_valid(const nrf24_command_packet_t *command, size_t length)
+{
+    return command != NULL && length == sizeof(*command)
+        && command->magic == NRF24_COMMAND_MAGIC
+        && command->crc16 == nrf24_command_crc16(
+            command, offsetof(nrf24_command_packet_t, crc16));
+}
+
+static nrf24_command_result_t execute_command(const nrf24_command_packet_t *command)
+{
+    switch (command->command) {
+        case NRF24_COMMAND_REC_ON:
+            ESP_LOGI(TAG, "REC_ON recibido (seq=%u): prueba de inicio de registro",
+                     (unsigned)command->sequence);
+            break;
+        case NRF24_COMMAND_REC_OFF:
+            ESP_LOGI(TAG, "REC_OFF recibido (seq=%u): prueba de fin de registro",
+                     (unsigned)command->sequence);
+            break;
+        case NRF24_COMMAND_CALIBRATE:
+            ESP_LOGI(TAG, "CALIBRAR recibido (seq=%u): prueba de solicitud de calibracion",
+                     (unsigned)command->sequence);
+            break;
+        default:
+            ESP_LOGW(TAG, "Comando desconocido: %u (seq=%u)",
+                     (unsigned)command->command, (unsigned)command->sequence);
+            return NRF24_COMMAND_RESULT_INVALID_COMMAND;
+    }
+    return NRF24_COMMAND_RESULT_ACCEPTED;
+}
+
+static esp_err_t send_command_response(nrf24l01_t *radio,
+                                      const nrf24_command_packet_t *command,
+                                      uint8_t result, uint8_t state)
+{
+    nrf24_command_ack_packet_t response = {
+        .magic = NRF24_COMMAND_ACK_MAGIC,
+        .sequence = command->sequence,
+        .command = command->command,
+        .result = result,
+        .state = state,
+    };
+    response.crc16 = nrf24_command_crc16(
+        &response, offsetof(nrf24_command_ack_packet_t, crc16));
+    esp_err_t err = nrf24l01_transmit(
+        radio, &response, sizeof(response), NRF24_TX_TIMEOUT_MS);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Respuesta entregada: seq=%u comando=%s resultado=%u estado=%u",
+                 (unsigned)response.sequence, command_name(response.command),
+                 (unsigned)response.result, (unsigned)response.state);
+    } else {
+        ESP_LOGW(TAG, "Fallo de respuesta seq=%u: %s; un reintento no repite la accion",
+                 (unsigned)response.sequence, esp_err_to_name(err));
+    }
+    return err;
+}
+
+static void process_ack_payload(nrf24l01_t *radio, command_history_t *history)
+{
+    /* Iterar, sin recursion: el ACK de una respuesta tambien puede traer comandos.
+     * Limitar el trabajo para que una cadena de reintentos no detenga telemetria.
+     */
+    for (unsigned count = 0; count < COMMANDS_PER_CYCLE; ++count) {
+        bool available = false;
+        nrf24_pipe_t pipe = NRF24_PIPE_0;
+        esp_err_t err = nrf24l01_data_available(radio, &available, &pipe);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "No se pudo consultar ACK: %s", esp_err_to_name(err));
+            return;
+        }
+        if (!available) return;
+
+        uint8_t payload[NRF24_MAX_PAYLOAD_SIZE];
+        size_t length = 0;
+        err = nrf24l01_receive(radio, payload, sizeof(payload), &length, &pipe);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "No se pudo leer ACK: %s", esp_err_to_name(err));
+            return;
+        }
+        if (length != sizeof(nrf24_command_packet_t)) {
+            ESP_LOGW(TAG, "ACK descartado: longitud=%u, esperada=7", (unsigned)length);
+            continue;
+        }
+
+        nrf24_command_packet_t command;
+        memcpy(&command, payload, sizeof(command));
+        if (!command_is_valid(&command, length)) {
+            ESP_LOGW(TAG, "ACK descartado: magic o CRC incorrecto");
+            continue;
+        }
+
+        ESP_ERROR_CHECK(gpio_set_level(COMMAND_LED_GPIO, 1));
+        ESP_LOGI(TAG, "ACK recibido: seq=%u comando=%s (%u)",
+                 (unsigned)command.sequence, command_name(command.command),
+                 (unsigned)command.command);
+        uint8_t result;
+        uint8_t state = 0; /* Sin maquina de estados en esta prueba. */
+        if (history->valid && command.sequence == history->sequence) {
+            state = history->state;
+            result = command.command == history->command
+                ? NRF24_COMMAND_RESULT_DUPLICATE
+                : NRF24_COMMAND_RESULT_INVALID_COMMAND;
+            ESP_LOGW(TAG, "Secuencia repetida: %u, resultado=%u; no se ejecuta",
+                     (unsigned)command.sequence, (unsigned)result);
+        } else {
+            result = execute_command(&command);
+            *history = (command_history_t) {
+                .valid = true,
+                .sequence = command.sequence,
+                .command = command.command,
+                .result = result,
+                .state = state,
+            };
+        }
+
+        (void)send_command_response(radio, &command, result, state);
+        /* Volver a consultar RX FIFO incluso si fallo la respuesta:
+         * puede haber comandos pendientes recibidos anteriormente.
+         */
+    }
+    ESP_LOGW(TAG, "Limite de comandos por ciclo; pendientes para siguiente telemetria");
 }
