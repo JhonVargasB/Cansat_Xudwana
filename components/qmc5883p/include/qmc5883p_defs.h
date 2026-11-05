@@ -1,0 +1,57 @@
+#pragma once
+
+#include <stdint.h>
+
+#define QMC5883P_I2C_ADDRESS UINT8_C(0x2C)
+#define QMC5883P_CHIP_ID UINT8_C(0x80)
+#define QMC5883P_MAX_I2C_CLOCK_HZ UINT32_C(400000)
+
+#define QMC5883P_REG_CHIP_ID UINT8_C(0x00)
+#define QMC5883P_REG_X_LSB UINT8_C(0x01)
+#define QMC5883P_REG_STATUS UINT8_C(0x09)
+#define QMC5883P_REG_CONTROL_1 UINT8_C(0x0A)
+#define QMC5883P_REG_CONTROL_2 UINT8_C(0x0B)
+/* Configuracion de signos recomendada en el ejemplo de aplicacion de QST. */
+#define QMC5883P_REG_AXIS_SIGN UINT8_C(0x29)
+#define QMC5883P_AXIS_SIGN_DEFAULT UINT8_C(0x06)
+
+#define QMC5883P_STATUS_DRDY (UINT8_C(1) << 0)
+#define QMC5883P_STATUS_OVFL (UINT8_C(1) << 1)
+#define QMC5883P_CONTROL_1_MODE_MASK UINT8_C(0x03)
+#define QMC5883P_MODE_SUSPEND UINT8_C(0x00)
+#define QMC5883P_MODE_NORMAL UINT8_C(0x01)
+#define QMC5883P_CONTROL_2_SOFT_RESET (UINT8_C(1) << 7)
+#define QMC5883P_CONTROL_2_DEFINED_MASK UINT8_C(0xCF)
+
+/* Codificaciones de los campos de CONTROL_1 y CONTROL_2 (QST, Rev. E). */
+typedef enum
+{
+    QMC5883P_ODR_10_HZ = 0,
+    QMC5883P_ODR_50_HZ = 1,
+    QMC5883P_ODR_100_HZ = 2,
+    QMC5883P_ODR_200_HZ = 3,
+} qmc5883p_odr_t;
+
+typedef enum
+{
+    QMC5883P_RANGE_30_G = 0,
+    QMC5883P_RANGE_12_G = 1,
+    QMC5883P_RANGE_8_G = 2,
+    QMC5883P_RANGE_2_G = 3,
+} qmc5883p_range_t;
+
+typedef enum
+{
+    QMC5883P_OSR1_8 = 0,
+    QMC5883P_OSR1_4 = 1,
+    QMC5883P_OSR1_2 = 2,
+    QMC5883P_OSR1_1 = 3,
+} qmc5883p_osr1_t;
+
+typedef enum
+{
+    QMC5883P_OSR2_1 = 0,
+    QMC5883P_OSR2_2 = 1,
+    QMC5883P_OSR2_4 = 2,
+    QMC5883P_OSR2_8 = 3,
+} qmc5883p_osr2_t;

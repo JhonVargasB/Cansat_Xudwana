@@ -58,9 +58,14 @@ void app_main(void)
         if (err == ESP_OK)
         {
             ESP_LOGI(TAG,
-                     "Temperatura=%.2f C, Presion=%.2f Pa, Altitud=%.2f m",
+                     "t=%lld us dt=%.6f s alpha=%.6f T=%.2f C "
+                     "P_raw=%.3f Pa P_EMA=%.3f Pa Altitud=%.3f m",
+                     (long long)bmp180.data.timestamp_us,
+                     (double)bmp180.data.pressure_filter_dt_s,
+                     (double)bmp180.data.pressure_filter_alpha,
                      bmp180.data.temperature,
                      bmp180.data.pressure,
+                     (double)bmp180.data.pressure_filtered_pa,
                      bmp180.data.altitude);
         }
         else

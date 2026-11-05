@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Fixed 7-bit I2C address and identification value. */
@@ -34,6 +35,7 @@
 #define BMP180_PRESSURE_TIME_UHR_MS    UINT32_C(26)
 
 #define BMP180_DEFAULT_SEA_LEVEL_PRESSURE_PA 101325.0
+#define BMP180_DEFAULT_PRESSURE_FILTER_CUTOFF_HZ 3.0f
 
 typedef enum
 {
@@ -67,7 +69,15 @@ typedef struct
 typedef struct
 {
     double temperature;
+    /* Presion compensada por Bosch, ANTES del EMA (no es el ADC crudo). */
     double pressure;
+    /* La altitud usa pressure_filtered_pa. */
     double altitude;
+    float pressure_filtered_pa;
+    float pressure_filter_dt_s;
+    float pressure_filter_alpha;
+    /* Fin de la lectura de presion; aproximado, no timestamp del ADC. */
+    int64_t timestamp_us;
+    bool valid;
 } bmp180_data_t;
 

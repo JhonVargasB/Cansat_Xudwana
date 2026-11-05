@@ -206,6 +206,74 @@ esp_err_t mpu6050_deinit(mpu6050_t *mpu6050)
     return err;
 }
 
+esp_err_t mpu6050_set_i2c_bypass(mpu6050_t *mpu6050, bool enabled)
+{
+    if (mpu6050 == NULL)
+        return ESP_ERR_INVALID_ARG;
+    if (!mpu6050->initialized || mpu6050->i2c_dev == NULL)
+        return ESP_ERR_INVALID_STATE;
+
+    uint8_t original_user_ctrl;
+    uint8_t original_int_pin_cfg;
+    esp_err_t err = mpu6050_read(mpu6050, USER_CTRL, &original_user_ctrl, 1);
+    if (err != ESP_OK)
+        return err;
+    err = mpu6050_read(mpu6050, INT_PIN_CONFIG, &original_int_pin_cfg, 1);
+    if (err != ESP_OK)
+        return err;
+
+    uint8_t user_ctrl = original_user_ctrl;
+    uint8_t int_pin_cfg = original_int_pin_cfg;
+    if (enabled)
+    {
+        user_ctrl &= (uint8_t)~MPU6050_USER_CTRL_I2C_MST_EN;
+        int_pin_cfg |= MPU6050_INT_PIN_CFG_BYPASS_EN;
+    }
+    else
+    {
+        int_pin_cfg &= (uint8_t)~MPU6050_INT_PIN_CFG_BYPASS_EN;
+    }
+
+    /* El maestro auxiliar debe estar apagado antes de abrir el bypass. */
+    if (user_ctrl != original_user_ctrl)
+    {
+        err = mpu6050_write(mpu6050, USER_CTRL, &user_ctrl, 1);
+        if (err != ESP_OK)
+            goto restore;
+    }
+    if (int_pin_cfg != original_int_pin_cfg)
+    {
+        err = mpu6050_write(mpu6050, INT_PIN_CONFIG, &int_pin_cfg, 1);
+        if (err != ESP_OK)
+            goto restore;
+    }
+
+    err = mpu6050_read(mpu6050, USER_CTRL, &user_ctrl, 1);
+    if (err != ESP_OK)
+        goto restore;
+    err = mpu6050_read(mpu6050, INT_PIN_CONFIG, &int_pin_cfg, 1);
+    if (err != ESP_OK)
+        goto restore;
+    if (((int_pin_cfg & MPU6050_INT_PIN_CFG_BYPASS_EN) != 0) != enabled
+        || (enabled && (user_ctrl & MPU6050_USER_CTRL_I2C_MST_EN) != 0))
+    {
+        err = ESP_ERR_INVALID_RESPONSE;
+        goto restore;
+    }
+
+    ESP_LOGI(TAG, "Bypass I2C=%s: USER_CTRL=0x%02X INT_PIN_CFG=0x%02X",
+             enabled ? "ON" : "OFF", user_ctrl, int_pin_cfg);
+    return ESP_OK;
+
+restore:
+    /* Recuperar la configuracion previa si falla la operacion. */
+    if (mpu6050_write(mpu6050, INT_PIN_CONFIG, &original_int_pin_cfg, 1) != ESP_OK)
+        ESP_LOGW(TAG, "No se pudo restaurar INT_PIN_CFG");
+    if (mpu6050_write(mpu6050, USER_CTRL, &original_user_ctrl, 1) != ESP_OK)
+        ESP_LOGW(TAG, "No se pudo restaurar USER_CTRL");
+    return err;
+}
+
 esp_err_t selftest_xg(mpu6050_t *mpu6050)
 {
     float promedio_td = 0;
@@ -457,11 +525,28 @@ esp_err_t mpu6050_read_accel(mpu6050_t *mpu6050)
 
 esp_err_t mpu6050_calibrate_accel(mpu6050_t *mpu6050)
 {
-    if (mpu6050 == NULL)
+    const float reference_sensor_g[3] = {0.0f, 0.0f, 1.0f};
+    return mpu6050_calibrate_accel_reference(mpu6050, reference_sensor_g);
+}
+
+esp_err_t mpu6050_calibrate_accel_reference(mpu6050_t *mpu6050,
+                                            const float reference_sensor_g[3])
+{
+    if (mpu6050 == NULL || reference_sensor_g == NULL)
         return ESP_ERR_INVALID_ARG;
 
     if (!mpu6050->initialized)
         return ESP_ERR_INVALID_STATE;
+
+    float reference_norm_squared = 0.0f;
+    for (int axis = 0; axis < 3; axis++)
+    {
+        if (!isfinite(reference_sensor_g[axis])) return ESP_ERR_INVALID_ARG;
+        reference_norm_squared += reference_sensor_g[axis] * reference_sensor_g[axis];
+    }
+    if (fabsf(reference_norm_squared - 1.0f) > 0.001f
+        || !isfinite(mpu6050->scale.accel_scale) || mpu6050->scale.accel_scale <= 0.0f)
+        return ESP_ERR_INVALID_ARG;
 
     esp_err_t err;
 
@@ -497,24 +582,19 @@ esp_err_t mpu6050_calibrate_accel(mpu6050_t *mpu6050)
         esp_rom_delay_us(2000U);
     }
 
-    int16_t ax_avg = ax_sum / samples;
-    int16_t ay_avg = ay_sum / samples;
-    int16_t az_avg = az_sum / samples;
-
-    /*
-        AFS_SEL = ±8g
-        Sensibilidad = 4096 LSB/g
-
-        Esperado:
-        X = 0g
-        Y = 0g
-        Z = +1g = 4096
-    */
-
-    mpu6050->calib.accel_x_offset = ax_avg;
-    mpu6050->calib.accel_y_offset = ay_avg;
-    mpu6050->calib.accel_z_offset =
-        (int16_t)(az_avg - (int16_t)mpu6050->scale.accel_scale);
+    const int32_t sums[3] = {ax_sum, ay_sum, az_sum};
+    int16_t offsets[3];
+    for (int axis = 0; axis < 3; axis++)
+    {
+        const float offset = (float)sums[axis] / samples
+            - reference_sensor_g[axis] * mpu6050->scale.accel_scale;
+        if (!isfinite(offset) || offset < INT16_MIN || offset > INT16_MAX)
+            return ESP_ERR_INVALID_RESPONSE;
+        offsets[axis] = (int16_t)lroundf(offset);
+    }
+    mpu6050->calib.accel_x_offset = offsets[0];
+    mpu6050->calib.accel_y_offset = offsets[1];
+    mpu6050->calib.accel_z_offset = offsets[2];
     /*
         //ESP_LOGI(TAG,
                  "Offsets acelerometro -> X:%d Y:%d Z:%d",

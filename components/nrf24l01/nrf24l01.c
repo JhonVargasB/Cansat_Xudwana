@@ -787,6 +787,13 @@ esp_err_t nrf24l01_print_diagnostics(nrf24l01_t *device)
     ESP_LOGI(TAG, "SPI asignado  : host=%d, reloj=%lu Hz",
              (int)device->config.spi_host,
              (unsigned long)device->config.spi_clock_hz);
+    int actual_spi_khz = 0;
+    error = spi_device_get_actual_freq(device->spi_handle, &actual_spi_khz);
+    if (error == ESP_OK) {
+        ESP_LOGI(TAG, "SPI efectivo  : modo=0, reloj=%d kHz", actual_spi_khz);
+    } else {
+        ESP_LOGW(TAG, "No se pudo consultar reloj SPI: %s", esp_err_to_name(error));
+    }
     ESP_LOGI(TAG, "GPIO asignados: MOSI=%d MISO=%d SCLK=%d CSN=%d CE=%d",
              (int)device->config.mosi_pin, (int)device->config.miso_pin,
              (int)device->config.sclk_pin, (int)device->config.csn_pin,
@@ -834,6 +841,9 @@ esp_err_t nrf24l01_print_diagnostics(nrf24l01_t *device)
     ESP_LOGI(TAG, "Perdidas/ARC  : %u / %u", observe >> 4U,
              observe & NRF24_OBSERVE_TX_ARC_CNT_MASK);
     ESP_LOGI(TAG, "RPD/FEATURE   : %u / 0x%02X", !!(rpd & NRF24_RPD_DETECTED), feature);
+    ESP_LOGI(TAG, "Funciones     : payload dinamico=%s ACK payload=%s",
+             (feature & NRF24_FEATURE_EN_DPL) ? "ON" : "OFF",
+             (feature & NRF24_FEATURE_EN_ACK_PAY) ? "ON" : "OFF");
     ESP_LOGI(TAG, "============================================");
     return ESP_OK;
 }

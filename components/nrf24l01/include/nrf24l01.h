@@ -63,7 +63,7 @@ typedef struct
         .spi_clock_hz = 8000000U,                                      \
         .spi_dma_chan = SPI_DMA_CH_AUTO,                               \
         .initialize_spi_bus = true,                                    \
-        .channel = 76U,                                                \
+        .channel = NRF24_RF_CHANNEL,                                   \
         .payload_size = NRF24_MAX_PAYLOAD_SIZE,                        \
         .enabled_rx_pipes = NRF24_PIPE_BIT(NRF24_PIPE_0),              \
         .auto_ack_pipes = NRF24_PIPE_BIT(NRF24_PIPE_0),                \
@@ -89,7 +89,7 @@ typedef struct
         .spi_clock_hz = 8000000U,                                      \
         .spi_dma_chan = SPI_DMA_CH_AUTO,                               \
         .initialize_spi_bus = true,                                    \
-        .channel = 76U,                                                \
+        .channel = NRF24_RF_CHANNEL,                                   \
         .payload_size = NRF24_MAX_PAYLOAD_SIZE,                        \
         .enabled_rx_pipes = NRF24_PIPE_BIT(NRF24_PIPE_0),              \
         .auto_ack_pipes = NRF24_PIPE_BIT(NRF24_PIPE_0),                \

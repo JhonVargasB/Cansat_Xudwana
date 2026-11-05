@@ -33,10 +33,25 @@ typedef struct
 
 esp_err_t mpu6050_init(mpu6050_t *mpu6050);
 esp_err_t mpu6050_deinit(mpu6050_t *mpu6050);
+/* Habilita acceso directo del ESP32 al bus auxiliar del MPU.
+ * Al habilitar, desactiva I2C_MST_EN y activa I2C_BYPASS_EN.
+ * Al deshabilitar, solo quita el bypass; no reactiva el maestro auxiliar.
+ * Conserva los otros bits y comprueba los registros despues de escribir.
+ * Llamar con el dispositivo inicializado y sin accesos concurrentes al MPU.
+ */
+esp_err_t mpu6050_set_i2c_bypass(mpu6050_t *mpu6050, bool enabled);
 esp_err_t selftest_xg(mpu6050_t *mpu6050);
 esp_err_t selftest_yg(mpu6050_t *mpu6050);
 esp_err_t selftest_zg(mpu6050_t *mpu6050);
 esp_err_t mpu6050_calibrate_accel(mpu6050_t *mpu6050);
+
+/* Calibracion en reposo con la fuerza especifica esperada en ejes sensor,
+ * expresada en g y de norma 1. Permite montar el MPU en otra orientacion.
+ * La API anterior conserva la referencia [0,0,+1]. No estima escala ni
+ * desalineacion: solo offsets para esta pose conocida.
+ */
+esp_err_t mpu6050_calibrate_accel_reference(mpu6050_t *mpu6050,
+                                            const float reference_sensor_g[3]);
 esp_err_t mpu6050_read_accel(mpu6050_t *mpu6050);
 esp_err_t mpu6050_read_gyro(mpu6050_t *mpu6050);
 esp_err_t mpu6050_calibrate_gyro(mpu6050_t *mpu6050);

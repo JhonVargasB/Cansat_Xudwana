@@ -86,6 +86,18 @@
 #define ATTITUDE_STILL_GYRO_RAD_S 0.08726646f
 #define ATTITUDE_STILL_ACCEL_TOLERANCE 0.15f
 #define ATTITUDE_ACCEL_BIAS_PROCESS_NOISE_STD 0.0005f
+/* Correccion magnetica del MISMO EKF; el QMC mide a 100 Hz. */
+#define YAW_MAGNETOMETER_ENABLED 1
+#define YAW_CORRECTION_PERIOD_US INT64_C(50000)
+/* >= un tick RTOS: ESP-IDF convierte el timeout I2C a ticks (aqui 10 ms). */
+#define YAW_MAGNETOMETER_IO_TIMEOUT_MS UINT32_C(20)
+#define YAW_MAGNETIC_MAX_AGE_US INT64_C(200000)
+#define YAW_MAGNETIC_DECLINATION_RAD 0.0f
+#define YAW_MEASUREMENT_NOISE_STD_RAD (5.0f * DEG_TO_RAD)
+#define YAW_MIN_FIELD_UT 10.0f
+#define YAW_MAX_FIELD_UT 100.0f
+#define YAW_MIN_HORIZONTAL_FIELD_UT 5.0f
+#define YAW_MAX_ABS_PITCH_RAD (85.0f * DEG_TO_RAD)
 #define ALTITUDE_BARO_MAX_LAG_US INT64_C(100000)
 #define ALTITUDE_BARO_MAX_AGE_US INT64_C(1000000)
 #define ALTITUDE_REFERENCE_SAMPLES UINT32_C(20)
@@ -95,6 +107,9 @@
 #define TELEMETRY_PERIOD_MAX_MS UINT32_C(10000)
 #define NRF24_EXAMPLE_TELEMETRY_PERIOD_DEFAULT_MS UINT32_C(1000)
 #define NRF24_TX_TIMEOUT_MS UINT32_C(100)
+#define NRF24_IDLE_TX_PERIOD_MS UINT32_C(1000)
+#define NRF24_RECORDING_TX_PERIOD_MS UINT32_C(100)
+#define NRF24_RADIO_SAMPLE_MAX_AGE_US INT64_C(500000)
 #define GPS_UPDATE_TIMEOUT_MS UINT32_C(1000)
 
 /* Escritura y estado del registro SD. */
@@ -105,6 +120,7 @@
 #define SD_LOGGING_READY (UINT32_C(1) << 0)
 
 /* Inicializadores de la direccion de radio y de la orientacion del MPU. */
+#define NRF24_RF_CHANNEL UINT8_C(30)
 #define NRF24_TELEMETRY_ADDRESS {0x01, 0xC2, 0xC2, 0xC2, 0xC2}
 
 /*
@@ -118,6 +134,33 @@
         {1.0f, 0.0f, 0.0f}, \
         {0.0f, -1.0f, 0.0f}, \
         {0.0f, 0.0f, -1.0f}, \
+    }
+
+/* Alineacion fija entre los sensores de la placa, DESPUES del signo 0x29=0x06
+ * que aplica el driver QMC. Identidad es una suposicion inicial: verificar los
+ * ejes de esta GY-87. NO copiar el mapa del AK8963 del CubeSat.
+ * B_body = MPU_TO_BODY_ROTATION * QMC_TO_MPU_ROTATION * B_qmc_calibrado.
+ * Si cambia el montaje de toda la placa, modificar solo MPU_TO_BODY_ROTATION.
+ * Ambas matrices deben ser rotaciones propias (determinante +1).
+ */
+#define QMC_TO_MPU_ROTATION \
+    {                       \
+        {1.0f, 0.0f, 0.0f}, \
+        {0.0f, 1.0f, 0.0f}, \
+        {0.0f, 0.0f, 1.0f}, \
+    }
+
+/* B_qmc_calibrado = SOFT_IRON * (B_qmc_uT - HARD_IRON).
+ * Coeficientes en los ejes publicados por el driver, antes de la rotacion.
+ * Valores neutros para probar: NO son una calibracion magnetica medida.
+ * CALIBRAR por radio sigue calibrando el MPU; no obtiene estos coeficientes.
+ */
+#define QMC_HARD_IRON_OFFSET_UT {0.0f, 0.0f, 0.0f}
+#define QMC_SOFT_IRON_MATRIX  \
+    {                       \
+        {1.0f, 0.0f, 0.0f}, \
+        {0.0f, 1.0f, 0.0f}, \
+        {0.0f, 0.0f, 1.0f}, \
     }
 
 /* Escalas utilizadas en la trama de telemetria. */
@@ -182,6 +225,13 @@ typedef struct
 {
     int64_t timestamp_us;
     telemetry_data_t data;
+    /* Solo almacenamiento local; NO forman parte del payload nRF24 de 32 bytes. */
+    int64_t barometer_timestamp_us;
+    float pressure_raw_pa;
+    float pressure_filtered_pa;
+    float pressure_filter_dt_s;
+    float pressure_filter_alpha;
+    bool barometer_valid;
 } telemetry_log_record_t;
 
 /* Altura relativa al arranque; timestamp aproximado de la conversion. */
@@ -236,6 +286,12 @@ typedef struct
     "status,satellites"
 
 #define TELEMETRY_DATALOG_HEADER "timestamp_us," DATALOG_HEADER
+/* Esquema ampliado de main2. Ruta distinta para no mezclar columnas con los
+ * telem.csv previos ni cambiar el formato de los ejemplos antiguos.
+ */
+#define TELEMETRY_EMA_DATALOG_PATH "/sdcard/telem_ema.csv"
+#define TELEMETRY_EMA_DATALOG_HEADER TELEMETRY_DATALOG_HEADER \
+    ",baro_timestamp_us,pressure_raw_pa,pressure_filtered_pa,pressure_dt_s,pressure_alpha,baro_valid"
 #define TELEMETRY_SERIAL_PREFIX "TELEM,"
 #define TELEMETRY_SERIAL_HEADER "TELEM_HEADER," TELEMETRY_DATALOG_HEADER
 

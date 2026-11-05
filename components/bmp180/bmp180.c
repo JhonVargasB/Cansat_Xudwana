@@ -5,12 +5,18 @@
 #include <stdint.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #define BMP180_I2C_TIMEOUT_MS 50
 
 static const char *TAG = "bmp180";
+
+/* Prototipos de funciones auxiliares del filtro. */
+static esp_err_t bmp180_filter_pressure(bmp180_pressure_filter_t *state,
+                                        float pressure_pa, int64_t timestamp_us,
+                                        float cutoff_hz, float *dt_s, float *alpha);
 
 static uint16_t bmp180_u16_be(const uint8_t *data)
 {
@@ -342,7 +348,10 @@ esp_err_t bmp180_init(bmp180_t *device)
         || (device->config.scl_speed_hz > BMP180_MAX_I2C_CLOCK_HZ)
         || ((uint8_t)device->config.oversampling
             > BMP180_OVERSAMPLING_ULTRA_HIGH_RESOLUTION)
-        || (device->config.sea_level_pressure_pa <= 0.0))
+        || !isfinite(device->config.sea_level_pressure_pa)
+        || (device->config.sea_level_pressure_pa <= 0.0)
+        || !isfinite(device->config.pressure_filter_cutoff_hz)
+        || (device->config.pressure_filter_cutoff_hz < 0.0f))
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -396,10 +405,13 @@ esp_err_t bmp180_init(bmp180_t *device)
         return err;
     }
 
+    device->pressure_filter = (bmp180_pressure_filter_t){0};
+    device->data = (bmp180_data_t){0};
     device->initialized = true;
-    ESP_LOGI(TAG, "BMP180 inicializado en 0x%02X, OSS=%u",
+    ESP_LOGI(TAG, "BMP180 inicializado en 0x%02X, OSS=%u EMA fc=%.2f Hz",
              device->config.device_address,
-             (unsigned)device->config.oversampling);
+             (unsigned)device->config.oversampling,
+             (double)device->config.pressure_filter_cutoff_hz);
     return ESP_OK;
 }
 
@@ -420,6 +432,8 @@ esp_err_t bmp180_deinit(bmp180_t *device)
     {
         device->i2c_dev = NULL;
         device->initialized = false;
+        device->data.valid = false;
+        device->pressure_filter = (bmp180_pressure_filter_t){0};
     }
 
     return err;
@@ -431,6 +445,7 @@ esp_err_t bmp180_read_data(bmp180_t *device)
     {
         return ESP_ERR_INVALID_ARG;
     }
+    device->data.valid = false;
 
     if (!device->initialized)
     {
@@ -439,7 +454,10 @@ esp_err_t bmp180_read_data(bmp180_t *device)
 
     if (((uint8_t)device->config.oversampling
          > BMP180_OVERSAMPLING_ULTRA_HIGH_RESOLUTION)
-        || (device->config.sea_level_pressure_pa <= 0.0))
+        || !isfinite(device->config.sea_level_pressure_pa)
+        || (device->config.sea_level_pressure_pa <= 0.0)
+        || !isfinite(device->config.pressure_filter_cutoff_hz)
+        || (device->config.pressure_filter_cutoff_hz < 0.0f))
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -460,6 +478,7 @@ esp_err_t bmp180_read_data(bmp180_t *device)
     {
         return err;
     }
+    const int64_t timestamp_us = esp_timer_get_time();
 
     device->uncomp.temperature = uncompensated_temperature;
     device->uncomp.pressure = uncompensated_pressure;
@@ -480,10 +499,55 @@ esp_err_t bmp180_read_data(bmp180_t *device)
         return err;
     }
 
-    device->data.temperature = temperature_c;
-    device->data.pressure = pressure_pa;
-    device->data.altitude = bmp180_calculate_altitude(
-        pressure_pa, device->config.sea_level_pressure_pa);
+    /* Solo confirmar estado y muestra si conversion, compensacion y filtro
+     * completos son validos. Nunca filtrar de nuevo device->data.pressure.
+     */
+    bmp180_pressure_filter_t filter = device->pressure_filter;
+    float dt_s, alpha;
+    err = bmp180_filter_pressure(&filter, (float)pressure_pa, timestamp_us,
+                                  device->config.pressure_filter_cutoff_hz,
+                                  &dt_s, &alpha);
+    if (err != ESP_OK) return err;
+    const double altitude = bmp180_calculate_altitude(
+        (double)filter.pressure_pa, device->config.sea_level_pressure_pa);
+    if (!isfinite(temperature_c) || !isfinite(altitude))
+        return ESP_ERR_INVALID_RESPONSE;
+    device->pressure_filter = filter;
+    device->data = (bmp180_data_t){
+        .temperature = temperature_c,
+        .pressure = pressure_pa,
+        .altitude = altitude,
+        .pressure_filtered_pa = filter.pressure_pa,
+        .pressure_filter_dt_s = dt_s,
+        .pressure_filter_alpha = alpha,
+        .timestamp_us = timestamp_us,
+        .valid = true,
+    };
 
+    return ESP_OK;
+}
+
+static esp_err_t bmp180_filter_pressure(bmp180_pressure_filter_t *state,
+                                        float pressure_pa, int64_t timestamp_us,
+                                        float cutoff_hz, float *dt_s, float *alpha)
+{
+    if (!isfinite(pressure_pa) || pressure_pa <= 0.0f || timestamp_us < 0
+        || !isfinite(cutoff_hz) || cutoff_hz < 0.0f)
+        return ESP_ERR_INVALID_ARG;
+    if (state->initialized && timestamp_us <= state->timestamp_us)
+        return ESP_ERR_INVALID_STATE; /* No procesar dos veces el mismo instante. */
+
+    *dt_s = state->initialized
+        ? (float)(timestamp_us - state->timestamp_us) * 1.0e-6f : 0.0f;
+    *alpha = 1.0f;
+    if (!state->initialized || cutoff_hz == 0.0f)
+        state->pressure_pa = pressure_pa;
+    else
+    {
+        *alpha = 1.0f - expf(-6.2831853071795864769f * cutoff_hz * *dt_s);
+        state->pressure_pa += *alpha * (pressure_pa - state->pressure_pa);
+    }
+    state->timestamp_us = timestamp_us;
+    state->initialized = true;
     return ESP_OK;
 }

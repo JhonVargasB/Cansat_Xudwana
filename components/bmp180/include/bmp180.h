@@ -22,7 +22,16 @@ typedef struct
     /* Sensor and altitude configuration. */
     bmp180_oversampling_t oversampling;
     double sea_level_pressure_pa;
+    /* EMA de presion: fc >= 0, 0 desactiva el suavizado. */
+    float pressure_filter_cutoff_hz;
 } bmp180_config_t;
+
+typedef struct
+{
+    float pressure_pa;
+    int64_t timestamp_us;
+    bool initialized;
+} bmp180_pressure_filter_t;
 
 typedef struct
 {
@@ -34,6 +43,7 @@ typedef struct
     bmp180_uncomp_data_t uncomp;
     bmp180_config_t config;
     bmp180_data_t data;
+    bmp180_pressure_filter_t pressure_filter;
 
     bool initialized;
 } bmp180_t;
@@ -45,6 +55,7 @@ typedef struct
         .scl_wait_us = 0,                                        \
         .oversampling = BMP180_OVERSAMPLING_STANDARD,            \
         .sea_level_pressure_pa = BMP180_DEFAULT_SEA_LEVEL_PRESSURE_PA, \
+        .pressure_filter_cutoff_hz = BMP180_DEFAULT_PRESSURE_FILTER_CUTOFF_HZ, \
     }
 
 /**
@@ -62,8 +73,15 @@ esp_err_t bmp180_deinit(bmp180_t *device);
  *
  * Results:
  *   temperature: degrees Celsius
- *   pressure: pascals
- *   altitude: meters relative to config.sea_level_pressure_pa
+ *   pressure: pascals compensados originales, sin EMA (se conservan).
+ *   pressure_filtered_pa: EMA float con dt real entre lecturas validas.
+ *   altitude: metros calculados con pressure_filtered_pa y sea_level_pressure_pa.
+ *   timestamp_us, pressure_filter_dt_s/alpha: para analisis de la adquisicion.
+ * Solo una conversion nueva y valida actualiza el EMA. La primera se copia
+ * directamente (dt=0, alpha=1). Un fallo conserva el estado y marca valid=false;
+ * la siguiente lectura usa el tiempo transcurrido desde la ultima valida.
+ * El EMA es causal O(1), no anade esperas a las conversiones existentes.
+ * Serializar externamente si varias tareas acceden a una misma instancia.
  */
 esp_err_t bmp180_read_data(bmp180_t *device);
 

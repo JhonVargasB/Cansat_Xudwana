@@ -51,6 +51,7 @@ Sampla rate = GyrOutRate/(1+SMPRT_DIV )
 #define I2C_MST_STATUS UINT8_C(0x36)
 // INT pin config
 #define INT_PIN_CONFIG UINT8_C(0x37)
+#define MPU6050_INT_PIN_CFG_BYPASS_EN (UINT8_C(1) << 1)
 // INT Enable
 #define INT_ENABLE UINT8_C(0x38)
 // INT Satatus
@@ -87,6 +88,7 @@ Sampla rate = GyrOutRate/(1+SMPRT_DIV )
 
 // User Control
 #define USER_CTRL UINT8_C(0x6A)
+#define MPU6050_USER_CTRL_I2C_MST_EN (UINT8_C(1) << 5)
 
 // Power Management
 #define PWR_MGMT_1 UINT8_C(0x6B)
